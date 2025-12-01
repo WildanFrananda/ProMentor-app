@@ -15,7 +15,7 @@ struct RootView: View {
         Color.brandBackground.edgesIgnoringSafeArea(.all)
             .overlay(
                 ZStack {
-                    switch appState.authState {
+                    switch container.appState.authState {
                     case .unknown:
                         ProgressView()
                     case .authenticated:
@@ -25,12 +25,11 @@ struct RootView: View {
                     }
                 }
             )
-            // Terapkan ToastView global di sini
             .toastView(toast: $appState.toast)
     }
 }
 
 @MainActor
 private struct AppContainerKey: EnvironmentKey {
-    static let defaultValue: AppContainer = AppContainerHolder.init(config: .localDevelopment).container
+    static let defaultValue: AppContainer = AppContainerHolder.init(config: .localDevelopment).container!
 }

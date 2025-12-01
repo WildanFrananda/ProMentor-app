@@ -16,6 +16,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
     }
     
     func registerForPushNotification() -> Void {
+        guard appContainer != nil else {
+            logger.warning("AppDelegate: AppContainer not ready, deferring push notification setup")
+            return
+        }
+        
         logger.info("AppDelegate: Request push notification permission...")
         
         UNUserNotificationCenter.current().delegate = self
@@ -49,9 +54,14 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         let tokenString = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
         logger.info("AppDelegate: Received device token APNs: \(tokenString)")
         
-        Task {
+        guard let container = appContainer else {
+            logger.warning("AppDelegate: AppContainer not available, cannot send token to backend")
+            return
+        }
+        
+        Task { @MainActor in
             do {
-                try await appContainer?.authRepository.registerDeviceToken(tokenString)
+                try await container.authRepository.registerDeviceToken(tokenString)
                 logger.info("AppDelegate: Device token submitted to backend.")
             } catch {
                 logger.error("AppDelegate: Could not send device token to backend", error: error)
@@ -59,10 +69,22 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         }
     }
     
+    func retryPushNotificationSetupIfNeeded() -> Void {
+        guard appContainer != nil else { return }
+        
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+            if settings.authorizationStatus == .notDetermined {
+                DispatchQueue.main.async {
+                    self?.registerForPushNotification()
+                }
+            }
+        }
+    }
+    
     func application(
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
-    ) {
+    ) -> Void {
         logger.error("AppDelegate: Failed registering APNs", error: error)
     }
     

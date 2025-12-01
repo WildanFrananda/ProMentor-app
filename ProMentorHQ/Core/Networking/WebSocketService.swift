@@ -14,22 +14,39 @@ final class WebSocketService: WebSocketServiceProtocol {
     private let encoder = JSONCoders.iso8601Encoder
     private let decoder = JSONCoders.iso8601Decoder
     
+    private lazy var urlSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 30
+        configuration.waitsForConnectivity = true
+        return URLSession(configuration: configuration)
+    }()
+    
+    private let queue = DispatchQueue(label: "com.promentorhq.websocket", qos: .userInitiated)
+    
     init(config: EnvironmentConfig, logger: LoggerProtocol) {
         self.config = config
         self.logger = logger
     }
     
+    deinit {
+        disconnect()
+        urlSession.invalidateAndCancel()
+    }
+    
     func connect(sessionId: UUID, token: String) -> AsyncStream<ConnectionUpdate> {
-        guard var components = URLComponents(url: config.baseURL, resolvingAgainstBaseURL: false) else {
+        guard var components = URLComponents(url: config.webSocketBaseURL, resolvingAgainstBaseURL: false) else {
             return AsyncStream { continuation in
                 continuation.yield(.error(APIError.invalidURL))
                 continuation.finish()
             }
         }
         
-        components.scheme = config.baseURL.scheme == "https" ? "wss" : "ws"
-        components.port = 8080
-        components.path = "/v1/ws/\(sessionId.uuidString)"
+        if components.scheme == "https" { components.scheme = "wss" }
+        if components.scheme == "http" { components.scheme = "ws" }
+        
+        let existingPath = components.path == "/" ? "" : components.path
+        components.path = "\(existingPath)/v1/ws/\(sessionId.uuidString)"
+        
         components.queryItems = [
             URLQueryItem(name: "token", value: token)
         ]
@@ -41,24 +58,32 @@ final class WebSocketService: WebSocketServiceProtocol {
             }
         }
         
-        logger.info("WebSocketService: Connecting to \(url.path)...")
-        webSocketTask = URLSession.shared.webSocketTask(with: url)
+        logger.info("WebSocketService: Connecting to \(url.absoluteString)...")
+
+        webSocketTask = urlSession.webSocketTask(with: url)
         
-        let stream = AsyncStream(ConnectionUpdate.self) { continuation in
-            listenForMessages(continuation: continuation)
-            webSocketTask?.resume()
-            continuation.yield(.connected)
-            continuation.onTermination = { [weak self] _ in
-                self?.logger.info("WebSocketService: Stream terminated, disconnecting.")
+        let stream = AsyncStream(ConnectionUpdate.self) { [weak self] continuation in
+            guard let self = self else {
+                continuation.finish()
+                return
+            }
+            
+            continuation.onTermination =  { [weak self] _ in
+                self?.logger.info("WebsocketService: Stream terminated, disconnecting")
                 self?.disconnect()
             }
+            
+            self.listenForMessages(continuation: continuation)
+            self.webSocketTask?.resume()
+            continuation.yield(.connected)
         }
         
         return stream
     }
     
     func send(_ message: ClientMessage) async throws -> Void {
-        guard let task = webSocketTask else {
+        let task = await getWebSocketTask()
+        guard let task = task else {
             throw APIError.network(URLError(.notConnectedToInternet))
         }
         
@@ -82,9 +107,20 @@ final class WebSocketService: WebSocketServiceProtocol {
         webSocketTask = nil
     }
     
+    private func getWebSocketTask() async -> URLSessionWebSocketTask? {
+        return await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                continuation.resume(returning: self?.webSocketTask)
+            }
+        }
+    }
+    
     private func listenForMessages(continuation: AsyncStream<ConnectionUpdate>.Continuation) -> Void {
         webSocketTask?.receive { [weak self] result in
-            guard let self = self else { return }
+            guard let self = self else {
+                continuation.finish()
+                return
+            }
             
             switch result {
             case .success(let message):
@@ -92,6 +128,7 @@ final class WebSocketService: WebSocketServiceProtocol {
                 case .data(let data):
                     self.logger.debug("WebSocketService: Received binary data (unhandled).")
                     logger.info("WebSocketService: \(data)")
+
                 case .string(let text):
                     self.logger.debug("WebSocketService: Received string message")
                     if let data = text.data(using: .utf8) {
@@ -103,15 +140,19 @@ final class WebSocketService: WebSocketServiceProtocol {
                             continuation.yield(.error(APIError.decoding(error)))
                         }
                     }
+
                 @unknown default:
                     fatalError("Unknown WebSocket message type")
+                    break
                 }
                 
                 self.listenForMessages(continuation: continuation)
+
             case .failure(let error):
                 self.logger.error("WebSocketService: Receive failed", error: error)
                 continuation.yield(.error(error))
                 continuation.yield(.disconnected)
+                continuation.finish()
             }
         }
     }

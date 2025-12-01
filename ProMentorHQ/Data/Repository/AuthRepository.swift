@@ -20,14 +20,12 @@ final class AuthRepository: AuthRepositoryProtocol {
     }
     
     func login(request: LoginRequest) async throws -> Void {
-        do {
-            let response = try await api.login(request: request)
+        let response = try await api.login(request: request)
+        
+        try await tokenRefresher.performRefresh { [unowned self] in
             try storage.save(value: response.accessToken, forKey: SecureStorageKeys.accessToken)
             try storage.save(value: response.refreshToken, forKey: SecureStorageKeys.refreshToken)
             logger.info("AuthRepository: Login successful")
-        } catch {
-            logger.error("AuthRepository: Login failed", error: error)
-            throw error
         }
     }
     
@@ -42,6 +40,8 @@ final class AuthRepository: AuthRepositoryProtocol {
     }
     
     func logout() async throws -> Void {
+        await tokenRefresher.cancelRefresh()
+        
         do {
             guard let refreshToken = try storage.get(forKey: SecureStorageKeys.refreshToken) else {
                 logger.warning("AuthRepository: Logout called but no refresh token found.")
@@ -74,6 +74,11 @@ final class AuthRepository: AuthRepositoryProtocol {
                 let response = try await api.refresh(request: request)
 
                 try storage.save(value: response.accessToken, forKey: SecureStorageKeys.accessToken)
+                
+                if !response.accessToken.isEmpty {
+                    try storage.save(value: response.accessToken, forKey: SecureStorageKeys.refreshToken)
+                }
+                
                 logger.info("AuthRepository: Token refresh successful")
             } catch let apiError as APIError {
                 logger.error("AuthRepository: Refresh failed, forcing logout.", error: apiError)

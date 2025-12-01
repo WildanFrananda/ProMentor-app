@@ -30,8 +30,6 @@ struct DeviceTokenRequest: Encodable {
     let deviceToken: String
 }
 
-// MARK: - Response Payloads
-
 struct RegisterResponse: Decodable {
     let message: String
     let userId: UUID

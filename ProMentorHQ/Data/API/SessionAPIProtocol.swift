@@ -12,7 +12,8 @@ protocol SessionAPIProtocol {
         page: Int,
         limit: Int,
         query: String?,
-        categoryId: String?
+        categoryId: String?,
+        coachId: String?
     ) async throws -> (sessions: [SessionSummary], totalPages: Int)
     func fetchSessionDetail(id: UUID) async throws -> SessionDetail
     func joinSession(id: UUID) async throws -> Void

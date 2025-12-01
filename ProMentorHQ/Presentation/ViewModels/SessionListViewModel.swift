@@ -137,7 +137,8 @@ final class SessionListViewModel: ObservableObject {
                 page: currentPage,
                 limit: limit,
                 query: query,
-                categoryId: catId
+                categoryId: catId,
+                coachId: nil
             )
             
             let newSessions = result.sessions

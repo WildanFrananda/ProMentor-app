@@ -13,10 +13,24 @@ final class HTTPClient: HTTPClientProtocol {
     private let decoder = JSONCoders.iso8601Decoder
     private let encoder = JSONCoders.iso8601Encoder
     
+    private lazy var urlSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 60
+        configuration.waitsForConnectivity = true
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        
+        return URLSession(configuration: configuration, delegate: nil, delegateQueue: nil)
+    }()
+    
     init(config: EnvironmentConfig, storage: SecureStorageProtocol, logger: LoggerProtocol) {
         self.config = config
         self.storage = storage
         self.logger = logger
+    }
+    
+    deinit {
+        urlSession.invalidateAndCancel()
     }
     
     func get<T: Decodable>(_ path: String, requiresAuth: Bool) async throws -> T {
@@ -50,11 +64,13 @@ final class HTTPClient: HTTPClientProtocol {
         
         logger.debug("HTTPClient: Performing PUT (Upload) to \(url.host ?? "presigned-url")")
         
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await urlSession.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw APIError.unknown(nil)
         }
+        
+        logResponse(Data(), response: httpResponse)
         
         guard (200...299).contains(httpResponse.statusCode) else {
             logger.error(
@@ -64,12 +80,6 @@ final class HTTPClient: HTTPClientProtocol {
             throw APIError.server(statusCode: httpResponse.statusCode, response: nil)
         }
     }
-    
-//    func delete(_ path: String, requiresAuth: Bool) async throws -> Void {
-//        let _: EmptyResponse = try await performRequest(
-//            path: path, method: "DELETE", requiresAuth: requiresAuth
-//        )
-//    }
     
     private func buildRequest<T: Encodable>(
         path: String,
@@ -83,7 +93,6 @@ final class HTTPClient: HTTPClientProtocol {
         
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.setValue("true", forHTTPHeaderField: "ngrok-skip-browser-warning")
         
         if (body as? EmptyResponse) == nil, let body = body {
             request.httpBody = try encoder.encode(body)
@@ -101,14 +110,16 @@ final class HTTPClient: HTTPClientProtocol {
     }
     
     private func performRequest(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        logger.debug("HTTPClient: Performing \(request.httpMethod ?? "") request to \(request.url?.path() ?? "")")
+        logRequest(request)
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await urlSession.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.unknown(nil)
             }
+            
+            logResponse(data, response: httpResponse)
             
             guard (200...299).contains(httpResponse.statusCode) else {
                 logger.warning("HTTPClient: Request failed with status \(httpResponse.statusCode) for \(request.httpMethod ?? "N/A") \(request.url?.path() ?? "N/A")")
@@ -117,7 +128,6 @@ final class HTTPClient: HTTPClientProtocol {
             }
             
             return (data, httpResponse)
-            
         } catch let apiError as APIError {
             throw apiError
         } catch {
@@ -137,5 +147,46 @@ final class HTTPClient: HTTPClientProtocol {
             logger.error("HTTPClient: Decoding failed", error: error)
             throw APIError.decoding(error)
         }
+    }
+    
+    private func logRequest(_ request: URLRequest) -> Void {
+        Task.detached(priority: .background) {
+            print("\n [REQUEST] \(request.httpMethod ?? "N/A") \(request.url?.absoluteString ?? "N/A")")
+            
+            if let headers = request.allHTTPHeaderFields {
+                print("Header: \(headers)")
+            }
+            
+            if let body = request.httpBody, let json = body.prettyPrintedJSON {
+                print("   Body:\n\(json)")
+            }
+        }
+    }
+    
+    private func logResponse(_ data: Data, response: HTTPURLResponse) -> Void {
+        Task.detached(priority: .background) {
+            let icon = (200...299).contains(response.statusCode) ? "✅" : "❌"
+            print("\n\(icon) [RESPONSE] \(response.statusCode) \(response.url?.path ?? "")")
+            if let json = data.prettyPrintedJSON {
+                print("   Body:\n\(json)")
+            } else {
+                let string = String(data: data, encoding: .utf8) ?? ""
+                if !string.isEmpty {
+                     print("   Body: \(string)")
+                } else {
+                     print("   Body: (Empty)")
+                }
+            }
+            print("--------------------------------------------------\n")
+        }
+    }
+}
+
+extension Data {
+    var prettyPrintedJSON: String? {
+        guard let object = try? JSONSerialization.jsonObject(with: self, options: []),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted]),
+              let prettyString = String(data: data, encoding: .utf8) else { return nil }
+        return prettyString
     }
 }

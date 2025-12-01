@@ -18,7 +18,8 @@ final class SessionAPI: SessionAPIProtocol {
         page: Int,
         limit: Int,
         query: String?,
-        categoryId: String?
+        categoryId: String?,
+        coachId: String?
     ) async throws -> (sessions: [SessionSummary], totalPages: Int) {
         var path = "/v1/sessions?page=\(page)&limit=\(limit)"
                 
@@ -29,6 +30,10 @@ final class SessionAPI: SessionAPIProtocol {
         
         if let categoryId = categoryId {
             path += "&category_id=\(categoryId)"
+        }
+        
+        if let coachId = coachId {
+            path += "&coach_id=\(coachId)"
         }
         
         let response: PaginatedResponse<SessionSummary> = try await client.get(path, requiresAuth: true)

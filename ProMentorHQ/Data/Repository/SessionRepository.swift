@@ -44,9 +44,10 @@ final class SessionRepository: SessionRepositoryProtocol {
         page: Int,
         limit: Int,
         query: String?,
-        categoryId: String?
+        categoryId: String?,
+        coachId: String?
     ) async throws -> (sessions: [SessionSummary], totalPages: Int) {
-        logger.info("SessionRepository: Fetching sessions (Page: \(page), Cat: \(categoryId ?? "All"))")
+        logger.info("SessionRepository: Fetching sessions (Page: \(page), Cat: \(categoryId ?? "All"), Coach: \(coachId ?? "All"))")
         
         return try await executeAuthRequest { [weak self] in
             guard let self = self else { throw APIError.unknown(nil) }
@@ -54,7 +55,8 @@ final class SessionRepository: SessionRepositoryProtocol {
                 page: page,
                 limit: limit,
                 query: query,
-                categoryId: categoryId
+                categoryId: categoryId,
+                coachId: coachId
             )
         }
     }

@@ -10,9 +10,17 @@ import SwiftUI
 
 @MainActor
 final class AppContainerHolder: ObservableObject {
-    let container: AppContainer
+    @Published private(set) var container: AppContainer?
+    @Published private(set) var isInitializing = false
     
     init(config: EnvironmentConfig = .localDevelopment) {
-        self.container = AppContainer(config: config)
+        Task {
+            await initializeContainer(config: config)
+        }
+    }
+    
+    private func initializeContainer(config: EnvironmentConfig) async -> Void {
+        self.container = await AppContainer(config: config)
+        self.isInitializing = false
     }
 }

@@ -9,143 +9,171 @@ import SwiftUI
 
 struct SessionDetailView: View {
     @StateObject private var vm: SessionDetailViewModel
+    @FocusState private var isInputFocused: Bool
     
     init(viewModel: SessionDetailViewModel) {
         _vm = StateObject(wrappedValue: viewModel)
     }
     
     var body: some View {
-        ZStack {
-            if vm.isLoading && vm.sessionDetail == nil {
-                ProgressView("Loading details...")
-            } else if let detail = vm.sessionDetail {
-                List {
+        VStack(spacing: 0) {
+            List {
+                if let detail = vm.sessionDetail {
                     Section {
                         CoachHeaderView(coach: detail.coach)
                     }
                     
-                    Section {
-                        Text(detail.description ?? "No description")
-                    } header: {
-                        Text("About this session")
+                    Section(header: Text("About this session")) {
+                        Text(detail.description ?? "")
                     }
                     
-                    Section {
-                        LabeledContent(
-                            "Start at",
-                            value: detail.startAt.formatted(date: .abbreviated, time: .shortened)
-                        )
+                    Section(header: Text("Schedule")) {
+                        LabeledContent("Start", value: detail.startAt.formatted(date: .abbreviated, time: .shortened))
                         if let endAt = detail.endAt {
-                            LabeledContent(
-                                "End at",
-                                value: endAt.formatted(date: .abbreviated, time: .shortened)
-                            )
+                            LabeledContent("End", value: endAt.formatted(date: .abbreviated, time: .shortened))
                         }
-                    } header: {
-                        Text("Schedule")
                     }
                     
                     Section {
-                        if vm.isLoading {
-                            HStack {
-                                Spacer()
-                                ProgressView("Joining...")
-                                Spacer()
-                            }
-                        } else {
-                            Button("Join this session") {
-                                Task {
-                                    await vm.joinSession()
-                                }
-                            }
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .tint(.blue)
-                        }
+                        actionButton
                     }
                     
-                    if let successMessage = vm.joinSuccessMessage {
+                    if let success = vm.joinSuccessMessage {
                         Section {
-                            Text(successMessage)
+                            Text(success)
                                 .foregroundColor(.green)
                         }
                     }
                     
-                    Section {
-                        if vm.chatMessages.isEmpty {
-                            Text("There are no messages yet. Start a conversation!")
-                                .foregroundColor(.secondary)
-                                .font(.caption)
-                        } else {
-                            ForEach(vm.chatMessages, id: \.id) { message in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(message.sender.name)
-                                        .font(.caption)
-                                        .fontWeight(.bold)
-                                        .foregroundColor(
-                                            message.sender.id == vm.sessionDetail?.id ? .blue : .secondary
-                                        )
-                                    
-                                    Text(message.content)
-                                        .font(.body)
-                                }
-                                .padding(.vertical, 4)
-                            }
-                        }
-                    } header: {
-                        chatHeader
-                    }
-                    
-                    Section {
-                        HStack {
-                            TextField("Type a message...", text: $vm.chatInput)
-                                .textFieldStyle(.roundedBorder)
-                            Button("Send") {
-                                Task {
-                                    await vm.sendChatMessage()
-                                }
-                            }
-                            .disabled(vm.chatInput.isEmpty || !vm.isWebSocketConnected)
-                        }
-                    } footer: {
-                        Text("Messages will disappear after the session ends")
-                    }
-                    
-                    if let errorMessage = vm.errorMessage {
+                    if let error = vm.errorMessage {
                         Section {
-                            Text(errorMessage)
+                            Text(error)
                                 .foregroundColor(.red)
                         }
                     }
+                } else if vm.isLoading {
+                    ProgressView("Loading detail...")
                 }
-            } else if let errorMessage = vm.errorMessage {
-                VStack(spacing: 16) {
-                    Text("Failed to load")
-                        .font(.headline)
-                    Text(errorMessage)
-                        .foregroundColor(.red)
-                        .multilineTextAlignment(.center)
-                    Button("Retry") {
-                        Task {
-                            await vm.loadDetail()
+                
+                if vm.userStatus == .joined || vm.userStatus == .coachOwner {
+                    Section(header: chatHeader) {
+                        if vm.chatMessages.isEmpty {
+                            Text("No messages yet. Say hello to everyone!")
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding()
+                        } else {
+                            ScrollViewReader { proxy in
+                                ForEach(vm.chatMessages, id: \.id) { message in
+                                    ChatBubbleView(
+                                        message: message,
+                                        isCurrentUser: message.sender.id == vm.currentUserId
+                                    )
+                                    .id(message.id)
+                                    .listRowSeparator(.hidden)
+                                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                                }
+                                .onChange(of: vm.chatMessages.count) { _, _ in
+                                    if let lastId = vm.chatMessages.last?.id {
+                                        withAnimation {
+                                            proxy.scrollTo(lastId, anchor: .bottom)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
-                    .buttonStyle(.bordered)
                 }
-                .padding()
+            }
+            .listStyle(.grouped)
+            
+            if vm.userStatus == .joined || vm.userStatus == .coachOwner {
+                VStack(spacing: 0) {
+                    Divider()
+                    HStack(spacing: 12) {
+                        TextField("Send message...", text: $vm.chatInput)
+                            .padding(10)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(20)
+                            .focused($isInputFocused)
+                            .disabled(!vm.isWebSocketConnected)
+                        
+                        Button {
+                            Task {
+                                await vm.sendChatMessage()
+                            }
+                        } label: {
+                            Image(systemName: "paperline.fill")
+                                .font(.title2)
+                                .foregroundColor(vm.chatInput.isEmpty || !vm.isWebSocketConnected ? .gray : .blue)
+                                .rotationEffect(.degrees(45))
+                        }
+                        .disabled(vm.chatInput.isEmpty || !vm.isWebSocketConnected)
+                    }
+                    .padding()
+                    .background(Color(.systemBackground))
+                }
             }
         }
         .navigationTitle(vm.sessionDetail?.title ?? "Loading...")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await vm.loadDetail()
-            await vm.connectToWebSocket()
+            if vm.userStatus == .joined || vm.userStatus == .coachOwner {
+                await vm.connectToWebSocket()
+            }
         }
         .onDisappear {
             vm.disconnectWebSocket()
         }
     }
     
+    @ViewBuilder
+    private var actionButton: some View {
+        switch vm.userStatus {
+        case .loading:
+            ProgressView()
+        case .coachOwner:
+            HStack {
+                Image(systemName: "mic.fill")
+                Text("You are host")
+            }
+            .font(.headline)
+            .foregroundColor(.blue)
+            .frame(maxWidth: .infinity, alignment: .center)
+        case .joined:
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                Text("You have registered")
+            }
+            .font(.headline)
+            .foregroundColor(.green)
+            .frame(maxWidth: .infinity, alignment: .center)
+        case .open:
+            if vm.isLoading {
+                ProgressView()
+            } else {
+                Button("Gabung Sesi Ini") {
+                    Task { await vm.joinSession() }
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .foregroundColor(.white)
+                .padding()
+                .background(Color.blue)
+                .cornerRadius(10)
+            }
+        case .ended:
+            Text("Session ended")
+                .font(.headline)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding()
+                .background(Color(.systemGray5))
+                .cornerRadius(10)
+        }
+    }
+
     @ViewBuilder
     private var chatHeader: some View {
         HStack {
@@ -154,7 +182,7 @@ struct SessionDetailView: View {
             Circle()
                 .frame(width: 8, height: 8)
                 .foregroundColor(vm.isWebSocketConnected ? .green : .red)
-            Text(vm.isWebSocketConnected ? "Connected" : "Disconnected")
+            Text(vm.isWebSocketConnected ? "Online" : "Connecting...")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }

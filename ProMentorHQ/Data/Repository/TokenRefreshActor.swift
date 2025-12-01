@@ -10,10 +10,9 @@ import Foundation
 actor TokenRefreshActor {
     private var currentTask: Task<Void, Error>?
     
-    func performRefresh(_ operation: @escaping () async throws -> Void) async throws -> Void {
+    func performRefresh(_ operation: @Sendable @escaping () async throws -> Void) async throws -> Void {
         if let task = currentTask {
-            try await task.value
-            return
+            return try await task.value
         }
         
         let task = Task {
@@ -22,12 +21,15 @@ actor TokenRefreshActor {
         
         currentTask = task
         
-        do {
-            try await task.value
+        defer {
             currentTask = nil
-        } catch {
-            currentTask = nil
-            throw error
         }
+        
+        try await task.value
+    }
+    
+    func cancelRefresh() {
+        currentTask?.cancel()
+        currentTask = nil
     }
 }

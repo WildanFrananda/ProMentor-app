@@ -14,13 +14,14 @@ public struct EnvironmentConfig {
 
 extension EnvironmentConfig {
     static var localDevelopment: EnvironmentConfig {
-        let ngrokStringUrl = "https://851e01b86bd0.ngrok-free.app"
+        let apiURLString = "https://api.wildanfrananda.my.id"
+        let wsURLString = "wss://ws.wildanfrananda.my.id"
         
-        guard let apiURL = URL(string: ngrokStringUrl) else {
+        guard let apiURL = URL(string: apiURLString) else {
             fatalError("Invalid local API Base URL")
         }
         
-        guard let wsURL = URL(string: ngrokStringUrl) else {
+        guard let wsURL = URL(string: wsURLString) else {
             fatalError("Invalid local WebSocket Base URL")
         }
         
@@ -28,13 +29,6 @@ extension EnvironmentConfig {
     }
     
     static var production: EnvironmentConfig {
-        guard let apiURL = URL(string: "https://api.promentorhq.com/v1") else {
-            fatalError("Invalid production API Base URL")
-        }
-        guard let wsURL = URL(string: "wss://ws.promentorhq.com/v1/ws") else {
-            fatalError("Invalid production WebSocket Base URL")
-        }
-        
-        return EnvironmentConfig(baseURL: apiURL, webSocketBaseURL: wsURL)
+        return localDevelopment
     }
 }

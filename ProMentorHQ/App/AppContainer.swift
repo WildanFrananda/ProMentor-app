@@ -43,12 +43,18 @@ final class AppContainer {
         self.userRepository = UserRepository(api: userAPI, client: httpClient, logger: logger)
         self.sessionRepository = SessionRepository(api: sessionAPI, logger: logger, authRepository: authRepository)
         
-        checkInitialAuthentication()
+        Task { @MainActor in
+            await self.checkInitialAuthentication()
+        }
     }
     
-    private func checkInitialAuthentication() -> Void {
+    private func checkInitialAuthentication() async -> Void {
         do {
-            if let _ = try storage.get(forKey: SecureStorageKeys.accessToken) {
+            let hasToken = try await Task { @MainActor in
+                try storage.get(forKey: SecureStorageKeys.accessToken)
+            }.value
+            
+            if hasToken != nil {
                 appState.authState = .authenticated
                 logger.info("AppContainer: Found existing token. User authenticated")
             } else {
@@ -58,6 +64,9 @@ final class AppContainer {
         } catch {
             logger.error("AppContainer: Failed to read token on startup", error: error)
             appState.authState = .unauthenticated
+            
+            try? storage.delete(forKey: SecureStorageKeys.accessToken)
+            try? storage.delete(forKey: SecureStorageKeys.refreshToken)
         }
     }
     
@@ -95,6 +104,7 @@ final class AppContainer {
         return SessionDetailViewModel(
             sessionId: sessionId,
             sessionRepository: sessionRepository,
+            userRepository: userRepository,
             webSocketService: webSocketService,
             storage: storage,
             appState: appState,
@@ -120,16 +130,10 @@ final class AppContainer {
 }
 
 private struct AppContainerKey: EnvironmentKey {
-    static var defaultValue: AppContainer {
-        // Use a nonisolated(unsafe) static to store the container
-        // This is safe because AppContainer is only created on the main thread
-        struct Container {
-            static let shared = MainActor.assumeIsolated {
-                AppContainer()
-            }
-        }
-        return Container.shared
-    }
+    @MainActor
+    static var defaultValue: AppContainer = {
+        return AppContainer()
+    }()
 }
 
 extension EnvironmentValues {

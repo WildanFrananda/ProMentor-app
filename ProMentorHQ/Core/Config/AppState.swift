@@ -15,6 +15,7 @@ final class AppState: ObservableObject {
     @Published var themeIsDark: Bool = false
     @Published var toast: Toast? = nil
     @Published var authState: AuthState = .unknown
+    @Published var currentUser: User?
     private var cancellables = Set<AnyCancellable>()
     
     enum AuthState {
